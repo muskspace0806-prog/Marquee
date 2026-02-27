@@ -59,7 +59,7 @@ class ViewController: UIViewController {
         
         // 示例5：跑马灯效果
         let marqueeLabel = WaveGradientLabel(frame: CGRect(x: 20, y: 500, width: view.bounds.width - 40, height: 60))
-        marqueeLabel.text = "这是一段很长的文字，会自动滚动显示跑马灯效果"
+        marqueeLabel.text = "😯这是一段很长的文字，会自动滚动显示跑马灯效果😯mo🐔"
         marqueeLabel.font = UIFont.systemFont(ofSize: 35, weight: .heavy)
         marqueeLabel.gradientColors = [.systemYellow, .systemOrange, .systemRed, .systemPink]
         marqueeLabel.gradientDirection = .horizontal
