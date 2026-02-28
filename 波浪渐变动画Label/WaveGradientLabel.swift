@@ -28,9 +28,9 @@ enum WaveGradientDirection {
     }
 }
 
-// MARK: - WaveGradientLabel
+// MARK: - WaveGradientLabelView
 /// 渐变波浪文字 + 可选跑马灯；✅ Emoji 不参与渐变渲染（保持原色）
-class WaveGradientLabel: UIView {
+class WaveGradientLabelView: UIView {
 
     // MARK: - Layers
     private let gradientLayer = CAGradientLayer()
@@ -38,8 +38,17 @@ class WaveGradientLabel: UIView {
     /// 只用于做渐变遮罩：非 emoji 正常显示，emoji 位置透明（挖空）
     private let maskLabel = UILabel()
 
+    /// 跑马灯无缝循环需要第二份内容：用于遮罩（与 maskLabel 相同宽高与 attributedText）
+    private let maskLabel2 = UILabel()
+
+    /// 无缝跑马灯：渐变 mask 的容器（包含两份 maskLabel.layer）
+    private let maskContainerLayer = CALayer()
+
     /// 覆盖在上面只显示 emoji（原色），非 emoji 透明
     private let emojiLabel = UILabel()
+
+    /// 跑马灯无缝循环需要第二份 emoji
+    private let emojiLabel2 = UILabel()
 
     // MARK: - State
     private var isAnimating = false
@@ -57,7 +66,9 @@ class WaveGradientLabel: UIView {
     var font: UIFont = UIFont.systemFont(ofSize: 40, weight: .bold) {
         didSet {
             maskLabel.font = font
+            maskLabel2.font = font
             emojiLabel.font = font
+            emojiLabel2.font = font
             rebuildAttributedTextAndLayout()
         }
     }
@@ -98,8 +109,11 @@ class WaveGradientLabel: UIView {
     /// 跑马灯滚动速度（点/秒）
     var marqueeSpeed: CGFloat = 50.0
 
-    /// 跑马灯延迟时间（秒）
+    /// 跑马灯延迟时间（秒）：显示文字后，延迟一段时间再开始滚动（滚动后为无缝循环）
     var marqueeDelay: TimeInterval = 2.0
+
+    /// 跑马灯间隔（两段文本之间的空白距离）：无缝循环用
+    var marqueeGap: CGFloat = 40.0
 
     // MARK: - Initialization
     override init(frame: CGRect) {
@@ -130,8 +144,18 @@ class WaveGradientLabel: UIView {
         maskLabel.font = font
         maskLabel.numberOfLines = 1
         maskLabel.backgroundColor = .clear
-        // 关键：用 maskLabel.layer 当渐变遮罩（emoji 位置透明）
-        gradientLayer.mask = maskLabel.layer
+
+        // maskLabel2：无缝跑马灯第二份
+        maskLabel2.textAlignment = .center
+        maskLabel2.font = font
+        maskLabel2.numberOfLines = 1
+        maskLabel2.backgroundColor = .clear
+
+        // 关键：用 maskContainerLayer 当渐变遮罩（emoji 位置透明）
+        // 同时容纳两份 maskLabel.layer，实现无缝循环遮罩
+        gradientLayer.mask = maskContainerLayer
+        maskContainerLayer.addSublayer(maskLabel.layer)
+        maskContainerLayer.addSublayer(maskLabel2.layer)
 
         // emojiLabel：覆盖在上面，显示 emoji（原色）
         emojiLabel.textAlignment = .center
@@ -140,6 +164,14 @@ class WaveGradientLabel: UIView {
         emojiLabel.backgroundColor = .clear
         emojiLabel.isUserInteractionEnabled = false
         addSubview(emojiLabel)
+
+        // emojiLabel2：无缝跑马灯第二份 emoji
+        emojiLabel2.textAlignment = .center
+        emojiLabel2.font = font
+        emojiLabel2.numberOfLines = 1
+        emojiLabel2.backgroundColor = .clear
+        emojiLabel2.isUserInteractionEnabled = false
+        addSubview(emojiLabel2)
 
         rebuildAttributedTextAndLayout()
     }
@@ -188,8 +220,8 @@ class WaveGradientLabel: UIView {
     }
 
     /// 构建两份 attributedText：
-    /// - maskLabel：非 emoji 不透明，emoji 透明
-    /// - emojiLabel：emoji 不透明，非 emoji 透明
+    /// - maskLabel / maskLabel2：非 emoji 不透明，emoji 透明
+    /// - emojiLabel / emojiLabel2：emoji 不透明，非 emoji 透明
     private func rebuildAttributedTextAndLayout() {
         let full = text
 
@@ -230,29 +262,42 @@ class WaveGradientLabel: UIView {
         }
 
         maskLabel.attributedText = maskAttr
+        maskLabel2.attributedText = maskAttr
+
         emojiLabel.attributedText = emojiAttr
+        emojiLabel2.attributedText = emojiAttr
 
         updateTextSize()
         setNeedsLayout()
         layoutIfNeeded()
+
+        // 文字变化时，如果启用跑马灯，立即摆正到起点（避免“消失后再出现”）
+        if enableMarquee {
+            resetMarqueeToStartPosition()
+        }
     }
 
     // MARK: - Layout & Size
     private func updateTextSize() {
         if enableMarquee {
-            // 跑马灯：两层 label 都需要相同宽度
+            // 跑马灯：两层 label 都需要相同宽度（用无限宽测量）
             let size = maskLabel.sizeThatFits(CGSize(width: CGFloat.greatestFiniteMagnitude, height: bounds.height))
             maskLabel.frame.size = size
+            maskLabel2.frame.size = size
             emojiLabel.frame.size = size
+            emojiLabel2.frame.size = size
         } else {
             maskLabel.frame = bounds
+            maskLabel2.frame = bounds
             emojiLabel.frame = bounds
+            emojiLabel2.frame = bounds
         }
     }
 
     override func layoutSubviews() {
         super.layoutSubviews()
         gradientLayer.frame = bounds
+        maskContainerLayer.frame = bounds
 
         // 重要：maskLabel 不用 addSubview，但要保证 frame 正确
         updateTextSize()
@@ -260,6 +305,21 @@ class WaveGradientLabel: UIView {
         // emojiLabel 在 view 上显示，需要对齐
         if !enableMarquee {
             emojiLabel.frame = bounds
+            emojiLabel2.isHidden = true
+        } else {
+            // 跑马灯时：两份内容都要显示并对齐高度
+            emojiLabel.isHidden = false
+            emojiLabel2.isHidden = false
+
+            maskLabel.frame.origin.y = 0
+            maskLabel2.frame.origin.y = 0
+            emojiLabel.frame.origin.y = 0
+            emojiLabel2.frame.origin.y = 0
+
+            maskLabel.frame.size.height = bounds.height
+            maskLabel2.frame.size.height = bounds.height
+            emojiLabel.frame.size.height = bounds.height
+            emojiLabel2.frame.size.height = bounds.height
         }
     }
 
@@ -312,11 +372,22 @@ class WaveGradientLabel: UIView {
         updateTextSize()
 
         // 只要文字宽度超过视图就滚动（用 maskLabel 的宽度即可）
-        guard maskLabel.frame.width > bounds.width else { return }
+        guard maskLabel.frame.width > bounds.width else {
+            // 不需要滚动时，保持正常展示
+            maskLabel.frame = bounds
+            emojiLabel.frame = bounds
+            emojiLabel2.isHidden = true
+            return
+        }
 
         marqueeDisplayLink?.invalidate()
         marqueeDisplayLink = CADisplayLink(target: self, selector: #selector(updateMarquee))
         marqueeDisplayLink?.add(to: .main, forMode: .common)
+
+        // 关键：启用时先显示在当前文本位置（x=0），不会“突然消失”
+        resetMarqueeToStartPosition()
+
+        // 延迟后开始滚动；滚动后为无缝循环（连续匀速）
         marqueeStartTime = CACurrentMediaTime() + marqueeDelay
     }
 
@@ -325,31 +396,63 @@ class WaveGradientLabel: UIView {
         marqueeDisplayLink = nil
 
         maskLabel.frame = bounds
+        maskLabel2.frame = bounds
         emojiLabel.frame = bounds
+        emojiLabel2.frame = bounds
+        emojiLabel2.isHidden = true
+    }
+
+    /// 关键：无缝跑马灯起始位置：
+    /// 第一份 x=0；第二份紧跟其后 x=width+gap
+    private func resetMarqueeToStartPosition() {
+        let w = maskLabel.frame.width
+        let gap = marqueeGap
+
+        maskLabel.frame.origin.x = 0
+        maskLabel2.frame.origin.x = w + gap
+
+        emojiLabel.frame.origin.x = 0
+        emojiLabel2.frame.origin.x = w + gap
+
+        maskLabel.frame.origin.y = 0
+        maskLabel2.frame.origin.y = 0
+        emojiLabel.frame.origin.y = 0
+        emojiLabel2.frame.origin.y = 0
+
+        maskLabel.frame.size.height = bounds.height
+        maskLabel2.frame.size.height = bounds.height
+        emojiLabel.frame.size.height = bounds.height
+        emojiLabel2.frame.size.height = bounds.height
+
+        emojiLabel2.isHidden = false
     }
 
     @objc private func updateMarquee() {
-        let currentTime = CACurrentMediaTime()
+        let now = CACurrentMediaTime()
 
-        // 延迟后开始滚动
-        guard currentTime >= marqueeStartTime else { return }
+        // 延迟后开始滚动（开始前文本保持静止且可见）
+        guard now >= marqueeStartTime else { return }
 
-        let textWidth = maskLabel.frame.width
-        let viewWidth = bounds.width
-        let totalDistance = textWidth + viewWidth
+        let w = maskLabel.frame.width
+        let gap = marqueeGap
+        let cycleLen = w + gap
 
-        // 计算当前位置
-        let elapsed = currentTime - marqueeStartTime
-        let distance = CGFloat(elapsed) * marqueeSpeed
-        let position = distance.truncatingRemainder(dividingBy: totalDistance)
+        // cycleLen 必须大于 0
+        guard cycleLen > 0 else { return }
 
-        let x = viewWidth - position
-        maskLabel.frame.origin.x = x
-        emojiLabel.frame.origin.x = x
+        // 连续无缝循环：offset 在 [0, cycleLen) 内循环
+        let elapsed = now - marqueeStartTime
+        let speed = max(marqueeSpeed, 0.1)
+        let offset = (CGFloat(elapsed) * speed).truncatingRemainder(dividingBy: cycleLen)
 
-        // 如果滚动完成一轮，重置开始时间（添加延迟）
-        if position < marqueeSpeed / 60.0 { // 接近起点
-            marqueeStartTime = currentTime + marqueeDelay
-        }
+        // 第一份从 0 开始向左移动到 -cycleLen；第二份紧跟其后
+        let x1 = -offset
+        let x2 = x1 + cycleLen
+
+        maskLabel.frame.origin.x = x1
+        maskLabel2.frame.origin.x = x2
+
+        emojiLabel.frame.origin.x = x1
+        emojiLabel2.frame.origin.x = x2
     }
 }
