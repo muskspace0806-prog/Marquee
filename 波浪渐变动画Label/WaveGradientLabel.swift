@@ -1,4 +1,4 @@
-//
+
 //  WaveGradientLabel.swift
 //  波浪渐变动画Label
 //
@@ -9,27 +9,56 @@ import UIKit
 
 // MARK: - 渐变方向枚举
 enum WaveGradientDirection {
-    case horizontal
-    case vertical
-    case topLeftToBottomRight
-    case topRightToBottomLeft
+    case horizontalLeftToRight  // 水平：左到右
+    case horizontalRightToLeft  // 水平：右到左
+    case verticalTopToBottom    // 垂直：上到下
+    case verticalBottomToTop    // 垂直：下到上
+    case diagonalDownRight      // 斜向：左上到右下（从上往下）
+    case diagonalDownLeft       // 斜向：右上到左下（从上往下）
+    case diagonalUpRight        // 斜向：左下到右上（从下往上）
+    case diagonalUpLeft         // 斜向：右下到左上（从下往上）
 
     var points: (start: CGPoint, end: CGPoint) {
         switch self {
-        case .horizontal:
+        case .horizontalLeftToRight, .horizontalRightToLeft:
+            // 水平方向：保持相同的 points，通过动画方向控制波浪流向
             return (CGPoint(x: 0, y: 0.5), CGPoint(x: 1, y: 0.5))
-        case .vertical:
+            
+        case .verticalTopToBottom, .verticalBottomToTop:
+            // 垂直方向：保持相同的 points，通过动画方向控制波浪流向
             return (CGPoint(x: 0.5, y: 0), CGPoint(x: 0.5, y: 1))
-        case .topLeftToBottomRight:
+            
+        case .diagonalDownRight, .diagonalUpRight:
+            // 左上到右下 / 左下到右上：保持相同的 points
             return (CGPoint(x: 0, y: 0), CGPoint(x: 1, y: 1))
-        case .topRightToBottomLeft:
+            
+        case .diagonalDownLeft, .diagonalUpLeft:
+            // 右上到左下 / 右下到左上：保持相同的 points
             return (CGPoint(x: 1, y: 0), CGPoint(x: 0, y: 1))
         }
     }
+    
+    // ✅ 兼容旧名称（避免破坏现有代码）
+    @available(*, deprecated, renamed: "horizontalLeftToRight")
+    static var horizontal: WaveGradientDirection { .horizontalLeftToRight }
+    
+    @available(*, deprecated, renamed: "verticalTopToBottom")
+    static var vertical: WaveGradientDirection { .verticalTopToBottom }
+    
+    @available(*, deprecated, renamed: "diagonalDownRight")
+    static var topLeftToBottomRight: WaveGradientDirection { .diagonalDownRight }
+    
+    @available(*, deprecated, renamed: "diagonalDownLeft")
+    static var topRightToBottomLeft: WaveGradientDirection { .diagonalDownLeft }
+}
+
+// MARK: - 跑马灯方向枚举
+enum MarqueeDirection {
+    case rightToLeft  // 从右往左（默认，LTR 语言）
+    case leftToRight  // 从左往右（RTL 语言，如阿语）
 }
 
 // MARK: - WaveGradientLabelView
-/// 渐变波浪文字 + 可选跑马灯；✅ Emoji 不参与渐变渲染（保持原色）
 class WaveGradientLabelView: UIView {
 
     // MARK: - Layers
@@ -51,13 +80,30 @@ class WaveGradientLabelView: UIView {
     private var gradientDisplayLink: CADisplayLink?
     private var gradientStartTime: CFTimeInterval = 0
 
-    // ✅ 自动开启动画（默认 true）：不走跑马灯也会自动动
     var autoStartAnimation: Bool = true {
         didSet {
             if autoStartAnimation {
                 ensureGradientAnimatingIfNeeded()
             } else {
-                // 只是不自动开，不强行停；外部可手动 stopAnimation()
+                stopAnimation()
+            }
+        }
+    }
+    
+    /// 是否启用动画（false 时显示静态渐变）
+    var enableAnimation: Bool = true {
+        didSet {
+            if enableAnimation {
+                if autoStartAnimation {
+                    ensureGradientAnimatingIfNeeded()
+                }
+            } else {
+                stopAnimation()
+                // 重置到初始状态，显示静态渐变
+                CATransaction.begin()
+                CATransaction.setDisableActions(true)
+                gradientLayer.transform = CATransform3DIdentity
+                CATransaction.commit()
             }
         }
     }
@@ -110,6 +156,13 @@ class WaveGradientLabelView: UIView {
             }
         }
     }
+    
+    /// 动画帧率（默认 60fps，可设置为 30fps 降低消耗）
+    var preferredFramesPerSecond: Int = 60 {
+        didSet {
+            gradientDisplayLink?.preferredFramesPerSecond = preferredFramesPerSecond
+        }
+    }
 
     var enableMarquee: Bool = false {
         didSet {
@@ -120,10 +173,93 @@ class WaveGradientLabelView: UIView {
             }
         }
     }
+    
+    /// 强制重新启动跑马灯（用于兜底）
+    func restartMarqueeIfNeeded() {
+        guard enableMarquee else { return }
+        guard window != nil else { return }
+        guard bounds.width > 0, bounds.height > 0 else { return }
+        
+        // ✅ 关键修复：先停止，再重新启动
+        // 这样可以重新计算文字宽度和判断是否需要滚动
+        stopMarquee()
+        
+        // 强制重新计算文字大小
+        updateTextSize()
+        
+        // 重新启动
+        startMarquee()
+    }
+    
+    /// 调试：打印跑马灯状态
+    func debugMarqueeStatus() {
+        let textWidth = maskLabel.sizeThatFits(CGSize(width: CGFloat.greatestFiniteMagnitude, height: bounds.height)).width
+        let containerWidth = bounds.width
+        let thresholdWidth = containerWidth * marqueeThreshold
+        
+        print("🔍 [Marquee Debug]")
+        print("   - enableMarquee: \(enableMarquee)")
+        print("   - text: \"\(text)\"")
+        print("   - font: \(font)")
+        print("   - frame: \(frame)")
+        print("   - bounds: \(bounds)")
+        print("   - superview.bounds: \(superview?.bounds ?? .zero)")
+        print("   - window: \(window != nil ? "✅ attached" : "❌ not attached")")
+        print("   - textWidth: \(textWidth)px")
+        print("   - containerWidth: \(containerWidth)px")
+        print("   - threshold: \(marqueeThreshold) (\(thresholdWidth)px)")
+        print("   - needsScroll: \(textWidth > thresholdWidth) (\(textWidth > thresholdWidth ? "✅" : "❌"))")
+        print("   - maskLabel.frame: \(maskLabel.frame)")
+        print("   - maskLabel.attributedText: \(maskLabel.attributedText?.string ?? "nil")")
+        print("   - emojiLabel.frame: \(emojiLabel.frame)")
+        print("   - marqueeDisplayLink: \(marqueeDisplayLink != nil ? "✅ running" : "❌ not running")")
+        print("   - clipsToBounds: \(clipsToBounds)")
+        
+        // ✅ 关键：检查是否有 Auto Layout 约束
+        if translatesAutoresizingMaskIntoConstraints == false {
+            print("   ⚠️ Using Auto Layout - constraints may not be applied yet")
+        }
+        
+        if enableMarquee && marqueeDisplayLink == nil && textWidth > thresholdWidth {
+            print("   ⚠️ WARNING: Marquee should be running but it's not!")
+            print("   💡 Try calling: label.restartMarqueeIfNeeded()")
+        } else if enableMarquee && textWidth <= thresholdWidth {
+            print("   💡 Text is too short. Current situation:")
+            print("      - Text needs: \(textWidth)px")
+            print("      - Container has: \(containerWidth)px")
+            print("      - Threshold requires: >\(thresholdWidth)px")
+            if textWidth > containerWidth {
+                print("   ⚠️ CRITICAL: Text is wider than container but threshold blocks it!")
+                print("      Solution: Set marqueeThreshold = 1.0 (default)")
+            }
+        }
+    }
 
     var marqueeSpeed: CGFloat = 50.0
     var marqueeDelay: TimeInterval = 2.0
     var marqueeGap: CGFloat = 40.0
+    
+    /// 跑马灯方向（默认从右往左）
+    var marqueeDirection: MarqueeDirection = .rightToLeft {
+        didSet {
+            if enableMarquee {
+                // 方向改变时，重新启动跑马灯
+                stopMarquee()
+                startMarquee()
+            }
+        }
+    }
+    
+    /// 跑马灯最小宽度阈值（文字宽度超过容器宽度的百分比才启动跑马灯，默认 1.0 即 100%）
+    /// 设置为 0.8 表示文字宽度达到容器的 80% 就启动跑马灯
+    var marqueeThreshold: CGFloat = 1.0
+    
+    /// 文字对齐方式（默认居中）
+    var textAlignment: NSTextAlignment = .center {
+        didSet {
+            updateTextAlignment()
+        }
+    }
 
     // MARK: - Initialization
     override init(frame: CGRect) {
@@ -141,11 +277,17 @@ class WaveGradientLabelView: UIView {
         gradientDisplayLink?.invalidate()
     }
 
-    // ✅ 进/出 window 生命周期：自动开/停，避免耗电
     override func didMoveToWindow() {
         super.didMoveToWindow()
         if window != nil {
             ensureGradientAnimatingIfNeeded()
+            // ✅ 兜底：如果启用了跑马灯但没有启动，重新启动
+            if enableMarquee && marqueeDisplayLink == nil {
+                // 延迟一点确保 bounds 已经正确
+                DispatchQueue.main.async { [weak self] in
+                    self?.startMarquee()
+                }
+            }
         } else {
             stopAnimation()
         }
@@ -162,35 +304,46 @@ class WaveGradientLabelView: UIView {
         updateGradientDirection()
         updateGradientColors()
 
-        maskLabel.textAlignment = .center
+        maskLabel.textAlignment = textAlignment
         maskLabel.font = font
         maskLabel.numberOfLines = 1
+        maskLabel.lineBreakMode = .byClipping  // ✅ 不显示省略号
         maskLabel.backgroundColor = .clear
 
-        maskLabel2.textAlignment = .center
+        maskLabel2.textAlignment = textAlignment
         maskLabel2.font = font
         maskLabel2.numberOfLines = 1
+        maskLabel2.lineBreakMode = .byClipping  // ✅ 不显示省略号
         maskLabel2.backgroundColor = .clear
 
         maskContainerLayer.addSublayer(maskLabel.layer)
         maskContainerLayer.addSublayer(maskLabel2.layer)
 
-        emojiLabel.textAlignment = .center
+        emojiLabel.textAlignment = textAlignment
         emojiLabel.font = font
         emojiLabel.numberOfLines = 1
+        emojiLabel.lineBreakMode = .byClipping  // ✅ 不显示省略号
         emojiLabel.backgroundColor = .clear
         emojiLabel.isUserInteractionEnabled = false
         addSubview(emojiLabel)
 
-        emojiLabel2.textAlignment = .center
+        emojiLabel2.textAlignment = textAlignment
         emojiLabel2.font = font
         emojiLabel2.numberOfLines = 1
+        emojiLabel2.lineBreakMode = .byClipping  // ✅ 不显示省略号
         emojiLabel2.backgroundColor = .clear
         emojiLabel2.isUserInteractionEnabled = false
         addSubview(emojiLabel2)
 
         rebuildAttributedTextAndLayout()
         ensureGradientAnimatingIfNeeded()
+    }
+    
+    private func updateTextAlignment() {
+        maskLabel.textAlignment = textAlignment
+        maskLabel2.textAlignment = textAlignment
+        emojiLabel.textAlignment = textAlignment
+        emojiLabel2.textAlignment = textAlignment
     }
 
     private func updateGradientDirection() {
@@ -203,14 +356,20 @@ class WaveGradientLabelView: UIView {
         let colors = gradientColors.map { $0.cgColor }
         gradientLayer.colors = colors + colors
 
-        let step = 1.0 / Double(max(gradientColors.count, 1))
+        // ✅ 关键：让 locations 设置为让前半部分（0-0.5）和后半部分（0.5-1.0）完全相同
+        // 这样当 gradientLayer 移动 -w 时，视觉上是无缝的
+        let count = gradientColors.count
         var locations: [NSNumber] = []
-        for i in 0..<gradientColors.count {
-            locations.append(NSNumber(value: Double(i) * step * 0.5))
+        
+        // 第一组：0 到 0.5
+        for i in 0..<count {
+            locations.append(NSNumber(value: Double(i) / Double(count) * 0.5))
         }
-        for i in 0..<gradientColors.count {
-            locations.append(NSNumber(value: 0.5 + Double(i) * step * 0.5))
+        // 第二组：0.5 到 1.0（与第一组相同的间隔）
+        for i in 0..<count {
+            locations.append(NSNumber(value: 0.5 + Double(i) / Double(count) * 0.5))
         }
+        
         gradientLayer.locations = locations
     }
 
@@ -279,11 +438,23 @@ class WaveGradientLabelView: UIView {
     // MARK: - Layout & Size
     private func updateTextSize() {
         if enableMarquee {
-            let size = maskLabel.sizeThatFits(CGSize(width: CGFloat.greatestFiniteMagnitude, height: bounds.height))
-            maskLabel.frame.size = size
-            maskLabel2.frame.size = size
-            emojiLabel.frame.size = size
-            emojiLabel2.frame.size = size
+            // ✅ 跑马灯模式：先测量文字宽度，判断是否真的需要滚动
+            let textSize = maskLabel.sizeThatFits(CGSize(width: CGFloat.greatestFiniteMagnitude, height: bounds.height))
+            let needsScroll = textSize.width > bounds.width * marqueeThreshold
+            
+            if needsScroll {
+                // 需要滚动：使用文字的实际宽度
+                maskLabel.frame.size = textSize
+                maskLabel2.frame.size = textSize
+                emojiLabel.frame.size = textSize
+                emojiLabel2.frame.size = textSize
+            } else {
+                // ✅ 不需要滚动：直接使用 bounds，避免闪烁
+                maskLabel.frame = bounds
+                maskLabel2.frame = bounds
+                emojiLabel.frame = bounds
+                emojiLabel2.frame = bounds
+            }
         } else {
             maskLabel.frame = bounds
             maskLabel2.frame = bounds
@@ -305,9 +476,11 @@ class WaveGradientLabelView: UIView {
         if !enableMarquee {
             emojiLabel.frame = bounds
             emojiLabel2.isHidden = true
+            maskLabel2.isHidden = true  // ✅ 兜底：确保隐藏
         } else {
             emojiLabel.isHidden = false
             emojiLabel2.isHidden = false
+            maskLabel2.isHidden = false  // ✅ 确保显示
 
             maskLabel.frame.origin.y = 0
             maskLabel2.frame.origin.y = 0
@@ -318,13 +491,16 @@ class WaveGradientLabelView: UIView {
             maskLabel2.frame.size.height = bounds.height
             emojiLabel.frame.size.height = bounds.height
             emojiLabel2.frame.size.height = bounds.height
+            
+            // ✅ 兜底：如果启用了跑马灯但没有启动，重新启动
+            if marqueeDisplayLink == nil && maskLabel.frame.width > bounds.width {
+                startMarquee()
+            }
         }
 
         ensureGradientAnimatingIfNeeded()
     }
 
-    /// ✅ 关键：斜向回到 2w×2h（纹理比例稳定，不会“收缩/展开”）
-    /// 同时 TR->BL 需要 y = -h，保证 dy 正向移动不露底
     private func layoutGradientLayerForSeamlessTransform() {
         CATransaction.begin()
         CATransaction.setDisableActions(true)
@@ -333,19 +509,37 @@ class WaveGradientLabelView: UIView {
         let h = bounds.height
 
         switch gradientDirection {
-        case .horizontal:
+        case .horizontalLeftToRight:
+            // 向右移动：从 x=0 开始，向右移动到 x=w
+            gradientLayer.frame = CGRect(x: -w, y: 0, width: w * 2, height: h)
+            
+        case .horizontalRightToLeft:
+            // 向左移动：从 x=0 开始，向左移动到 x=-w
             gradientLayer.frame = CGRect(x: 0, y: 0, width: w * 2, height: h)
 
-        case .vertical:
+        case .verticalTopToBottom:
+            // 向下移动：从 y=0 开始，向下移动到 y=h
+            gradientLayer.frame = CGRect(x: 0, y: -h, width: w, height: h * 2)
+            
+        case .verticalBottomToTop:
+            // 向上移动：从 y=0 开始，向上移动到 y=-h
             gradientLayer.frame = CGRect(x: 0, y: 0, width: w, height: h * 2)
 
-        case .topLeftToBottomRight:
-            // 2w×2h + dx/dy 用 w/h 周期即可无缝
-            gradientLayer.frame = CGRect(x: 0, y: 0, width: w * 2, height: h * 2)
-
-        case .topRightToBottomLeft:
-            // dy 需要往下（+h），因此把 layer 往上挪一格，避免露底
+        case .diagonalDownRight:
+            // 向右下移动
+            gradientLayer.frame = CGRect(x: -w, y: -h, width: w * 2, height: h * 2)
+            
+        case .diagonalDownLeft:
+            // 向左下移动
             gradientLayer.frame = CGRect(x: 0, y: -h, width: w * 2, height: h * 2)
+            
+        case .diagonalUpRight:
+            // 向右上移动
+            gradientLayer.frame = CGRect(x: -w, y: 0, width: w * 2, height: h * 2)
+            
+        case .diagonalUpLeft:
+            // 向左上移动
+            gradientLayer.frame = CGRect(x: 0, y: 0, width: w * 2, height: h * 2)
         }
 
         CATransaction.commit()
@@ -369,6 +563,7 @@ class WaveGradientLabelView: UIView {
 
         gradientDisplayLink?.invalidate()
         gradientDisplayLink = CADisplayLink(target: self, selector: #selector(updateGradientFrame))
+        gradientDisplayLink?.preferredFramesPerSecond = preferredFramesPerSecond
         gradientDisplayLink?.add(to: .main, forMode: .common)
 
         gradientStartTime = CACurrentMediaTime()
@@ -385,7 +580,6 @@ class WaveGradientLabelView: UIView {
         CATransaction.commit()
     }
 
-    /// ✅ 斜向无缝且不“顿一下”：frame=2w×2h，周期就用 w/h
     @objc private func updateGradientFrame() {
         let w = bounds.width
         let h = bounds.height
@@ -393,25 +587,57 @@ class WaveGradientLabelView: UIView {
 
         let now = CACurrentMediaTime()
         let duration = max(animationDuration, 0.001)
-        let t = (now - gradientStartTime) / duration
-        let phase = CGFloat(t.truncatingRemainder(dividingBy: 1.0))   // [0,1)
-
+        let elapsed = now - gradientStartTime
+        
+        // ✅ 关键：使用 truncatingRemainder 保持在 [0, 1) 范围
+        // 但因为 gradientLayer 是 2 倍大小且 locations 均匀分布，循环是无缝的
+        let speed = 1.0 / duration
+        let cycles = elapsed * speed
+        let phase = CGFloat(cycles.truncatingRemainder(dividingBy: 1.0))
+        
         let dx: CGFloat
         let dy: CGFloat
 
         switch gradientDirection {
-        case .horizontal:
+        case .horizontalLeftToRight:
+            // 左到右：波浪向右移动（gradientLayer 向右移动）
+            dx = w * phase
+            dy = 0
+            
+        case .horizontalRightToLeft:
+            // 右到左：波浪向左移动（gradientLayer 向左移动）
             dx = -w * phase
             dy = 0
-        case .vertical:
+            
+        case .verticalTopToBottom:
+            // 上到下：波浪向下移动（gradientLayer 向下移动）
+            dx = 0
+            dy = h * phase
+            
+        case .verticalBottomToTop:
+            // 下到上：波浪向上移动（gradientLayer 向上移动）
             dx = 0
             dy = -h * phase
-        case .topLeftToBottomRight:
+            
+        case .diagonalDownRight:
+            // 左上到右下：波浪向右下移动
+            dx = w * phase
+            dy = h * phase
+            
+        case .diagonalDownLeft:
+            // 右上到左下：波浪向左下移动
+            dx = -w * phase
+            dy = h * phase
+            
+        case .diagonalUpRight:
+            // 左下到右上：波浪向右上移动
+            dx = w * phase
+            dy = -h * phase
+            
+        case .diagonalUpLeft:
+            // 右下到左上：波浪向左上移动
             dx = -w * phase
             dy = -h * phase
-        case .topRightToBottomLeft:
-            dx = -w * phase
-            dy =  h * phase
         }
 
         CATransaction.begin()
@@ -424,12 +650,36 @@ class WaveGradientLabelView: UIView {
     private func startMarquee() {
         updateTextSize()
 
-        guard maskLabel.frame.width > bounds.width else {
-            maskLabel.frame = bounds
-            emojiLabel.frame = bounds
+        // ✅ 使用阈值判断是否需要滚动
+        let textWidth = maskLabel.frame.width
+        let containerWidth = bounds.width
+        let needsScroll = textWidth > containerWidth * marqueeThreshold
+        
+        #if DEBUG
+        print("🎬 [Marquee] startMarquee called")
+        print("   - Text: \(text)")
+        print("   - textWidth: \(textWidth)")
+        print("   - containerWidth: \(containerWidth)")
+        print("   - threshold: \(marqueeThreshold) (\(containerWidth * marqueeThreshold)px)")
+        print("   - needsScroll: \(needsScroll)")
+        print("   - window: \(window != nil ? "✅" : "❌")")
+        #endif
+        
+        guard needsScroll else {
+            // ✅ 不需要滚动时，updateTextSize() 已经设置好了 frame
+            // 只需要隐藏第二份内容即可，不要再次设置 frame（避免闪烁）
+            maskLabel2.isHidden = true
             emojiLabel2.isHidden = true
+            
+            #if DEBUG
+            print("   ⚠️ Text too short, marquee not needed")
+            #endif
             return
         }
+
+        // ✅ 需要滚动时，显示第二份内容
+        maskLabel2.isHidden = false
+        emojiLabel2.isHidden = false
 
         marqueeDisplayLink?.invalidate()
         marqueeDisplayLink = CADisplayLink(target: self, selector: #selector(updateMarquee))
@@ -437,6 +687,10 @@ class WaveGradientLabelView: UIView {
 
         resetMarqueeToStartPosition()
         marqueeStartTime = CACurrentMediaTime() + marqueeDelay
+        
+        #if DEBUG
+        print("   ✅ Marquee started, delay: \(marqueeDelay)s")
+        #endif
     }
 
     private func stopMarquee() {
@@ -447,6 +701,9 @@ class WaveGradientLabelView: UIView {
         maskLabel2.frame = bounds
         emojiLabel.frame = bounds
         emojiLabel2.frame = bounds
+        
+        // ✅ 兜底：确保第二份内容隐藏
+        maskLabel2.isHidden = true
         emojiLabel2.isHidden = true
     }
 
@@ -454,11 +711,23 @@ class WaveGradientLabelView: UIView {
         let w = maskLabel.frame.width
         let gap = marqueeGap
 
-        maskLabel.frame.origin.x = 0
-        maskLabel2.frame.origin.x = w + gap
-
-        emojiLabel.frame.origin.x = 0
-        emojiLabel2.frame.origin.x = w + gap
+        switch marqueeDirection {
+        case .rightToLeft:
+            // 从右往左：第一份从右边开始（x=0），第二份在第一份右边
+            maskLabel.frame.origin.x = 0
+            maskLabel2.frame.origin.x = w + gap
+            
+            emojiLabel.frame.origin.x = 0
+            emojiLabel2.frame.origin.x = w + gap
+            
+        case .leftToRight:
+            // 从左往右：第一份从左边开始（x=0），第二份在第一份左边
+            maskLabel.frame.origin.x = 0
+            maskLabel2.frame.origin.x = -(w + gap)
+            
+            emojiLabel.frame.origin.x = 0
+            emojiLabel2.frame.origin.x = -(w + gap)
+        }
 
         maskLabel.frame.origin.y = 0
         maskLabel2.frame.origin.y = 0
@@ -486,8 +755,24 @@ class WaveGradientLabelView: UIView {
         let speed = max(marqueeSpeed, 0.1)
         let offset = (CGFloat(elapsed) * speed).truncatingRemainder(dividingBy: cycleLen)
 
-        let x1 = -offset
-        let x2 = x1 + cycleLen
+        let x1: CGFloat
+        let x2: CGFloat
+        
+        switch marqueeDirection {
+        case .rightToLeft:
+            // 从右往左：向左移动
+            // 第一份：从 0 移动到 -cycleLen
+            // 第二份：从 cycleLen 移动到 0
+            x1 = -offset
+            x2 = x1 + cycleLen
+            
+        case .leftToRight:
+            // 从左往右：向右移动
+            // 第一份：从 0 移动到 cycleLen
+            // 第二份：从 -cycleLen 移动到 0
+            x1 = offset
+            x2 = x1 - cycleLen
+        }
 
         maskLabel.frame.origin.x = x1
         maskLabel2.frame.origin.x = x2
