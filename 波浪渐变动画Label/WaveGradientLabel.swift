@@ -1,4 +1,4 @@
-
+//  这个就阿语跑马灯滚动方向不对,其他没问题
 //  WaveGradientLabel.swift
 //  波浪渐变动画Label
 //
@@ -8,7 +8,7 @@
 import UIKit
 
 // MARK: - 渐变方向枚举
-enum WaveGradientDirection {
+enum GMWaveGradientDirection {
     case horizontalLeftToRight  // 水平：左到右
     case horizontalRightToLeft  // 水平：右到左
     case verticalTopToBottom    // 垂直：上到下
@@ -40,16 +40,16 @@ enum WaveGradientDirection {
     
     // ✅ 兼容旧名称（避免破坏现有代码）
     @available(*, deprecated, renamed: "horizontalLeftToRight")
-    static var horizontal: WaveGradientDirection { .horizontalLeftToRight }
+    static var horizontal: GMWaveGradientDirection { .horizontalLeftToRight }
     
     @available(*, deprecated, renamed: "verticalTopToBottom")
-    static var vertical: WaveGradientDirection { .verticalTopToBottom }
+    static var vertical: GMWaveGradientDirection { .verticalTopToBottom }
     
     @available(*, deprecated, renamed: "diagonalDownRight")
-    static var topLeftToBottomRight: WaveGradientDirection { .diagonalDownRight }
+    static var topLeftToBottomRight: GMWaveGradientDirection { .diagonalDownRight }
     
     @available(*, deprecated, renamed: "diagonalDownLeft")
-    static var topRightToBottomLeft: WaveGradientDirection { .diagonalDownLeft }
+    static var topRightToBottomLeft: GMWaveGradientDirection { .diagonalDownLeft }
 }
 
 // MARK: - 跑马灯方向枚举
@@ -59,7 +59,7 @@ enum MarqueeDirection {
 }
 
 // MARK: - WaveGradientLabelView
-class WaveGradientLabelView: UIView {
+class GMWaveGradientLabelView: UIView {
 
     // MARK: - Layers
     private let gradientContainerLayer = CALayer()
@@ -135,7 +135,7 @@ class WaveGradientLabelView: UIView {
         didSet { updateGradientColors() }
     }
 
-    var gradientDirection: WaveGradientDirection = .horizontal {
+    var gradientDirection: GMWaveGradientDirection = .horizontal {
         didSet {
             updateGradientDirection()
             setNeedsLayout()
@@ -154,6 +154,61 @@ class WaveGradientLabelView: UIView {
             if isAnimating {
                 gradientStartTime = CACurrentMediaTime()
             }
+        }
+    }
+    
+    /// 当渐变和跑马灯方向一致且跑马灯运行时，使用的动画时长（可选）
+    /// - 如果设置了此值，当方向一致且跑马灯运行时，会使用此时长替代 animationDuration
+    /// - 如果为 nil（默认），则始终使用 animationDuration
+    /// - 建议设置为比 animationDuration 更小的值，以减少视觉冲突
+    /// - 例如：animationDuration = 4.5, sameDirectionAnimationDuration = 0.5
+    var sameDirectionAnimationDuration: TimeInterval? = nil {
+        didSet {
+            // 速度改变会在下一帧自动生效，不需要重置 gradientStartTime
+            // 这样可以保持动画的平滑过渡
+        }
+    }
+    
+    /// 获取当前应该使用的动画时长
+    private func getCurrentAnimationDuration() -> TimeInterval {
+        let isMarqueeRunning = enableMarquee && marqueeDisplayLink != nil
+        
+        // 如果跑马灯运行 && 方向一致 && 设置了 sameDirectionAnimationDuration
+        if isMarqueeRunning && isGradientAndMarqueeDirectionSame(),
+           let sameDirDuration = sameDirectionAnimationDuration {
+            return sameDirDuration
+        }
+        
+        // 其他情况使用 animationDuration
+        return animationDuration
+    }
+    
+    /// 检测渐变和跑马灯方向是否一致（会产生视觉冲突）
+    private func isGradientAndMarqueeDirectionSame() -> Bool {
+        // 关键理解：
+        // - 渐变方向是相对于容器的绝对方向
+        // - 跑马灯方向是文字移动的方向
+        // - 当两者方向一致时，用户眼睛跟随文字移动，渐变看起来反了
+        
+        switch (gradientDirection, marqueeDirection) {
+        case (.horizontalLeftToRight, .leftToRight):
+            // 渐变向右 →，文字向右 → → 方向一致，有冲突 ✅
+            return true
+            
+        case (.horizontalRightToLeft, .rightToLeft):
+            // 渐变向左 ←，文字向左 ← → 方向一致，有冲突 ✅
+            return true
+            
+        case (.horizontalLeftToRight, .rightToLeft):
+            // 渐变向右 →，文字向左 ← → 方向相反，无冲突
+            return false
+            
+        case (.horizontalRightToLeft, .leftToRight):
+            // 渐变向左 ←，文字向右 → → 方向相反，无冲突
+            return false
+            
+        default:
+            return false
         }
     }
     
@@ -191,6 +246,33 @@ class WaveGradientLabelView: UIView {
         startMarquee()
     }
     
+    /// 调试：打印表情检测结果
+    func debugEmojiDetection() {
+        print("🎨 [Emoji Debug] Text: \"\(text)\"")
+        for (index, ch) in text.enumerated() {
+            let isEmoji = characterContainsEmoji(ch)
+            print("   [\(index)] '\(ch)' -> \(isEmoji ? "✅ Emoji" : "❌ Text")")
+            
+            // 打印 Unicode 信息
+            for scalar in ch.unicodeScalars {
+                print("      U+\(String(format: "%04X", scalar.value)): isEmoji=\(scalar.properties.isEmoji), isEmojiPresentation=\(scalar.properties.isEmojiPresentation)")
+            }
+        }
+        
+        // 检查 emojiLabel 的属性
+        if let attr = emojiLabel.attributedText {
+            print("🎨 [Emoji Label] attributedText length: \(attr.length)")
+            attr.enumerateAttributes(in: NSRange(location: 0, length: attr.length)) { attributes, range, _ in
+                let substring = (attr.string as NSString).substring(with: range)
+                print("   Range \(range): '\(substring)'")
+                print("      Attributes: \(attributes)")
+            }
+        }
+        
+        print("🎨 [Emoji Label] textColor: \(emojiLabel.textColor?.description ?? "nil")")
+        print("🎨 [Emoji Label] font: \(emojiLabel.font?.description ?? "nil")")
+    }
+    
     /// 调试：打印跑马灯状态
     func debugMarqueeStatus() {
         let textWidth = maskLabel.sizeThatFits(CGSize(width: CGFloat.greatestFiniteMagnitude, height: bounds.height)).width
@@ -199,7 +281,10 @@ class WaveGradientLabelView: UIView {
         
         print("🔍 [Marquee Debug]")
         print("   - enableMarquee: \(enableMarquee)")
-        print("   - text: \"\(text)\"")
+        print("   - text (property): \"\(text)\"")
+        print("   - text (maskLabel): \"\(maskLabel.text ?? "nil")\"")
+        print("   - text (attributedText): \"\(maskLabel.attributedText?.string ?? "nil")\"")
+        print("   - text match: \(text == (maskLabel.text ?? "") ? "✅" : "❌ MISMATCH!")")
         print("   - font: \(font)")
         print("   - frame: \(frame)")
         print("   - bounds: \(bounds)")
@@ -210,7 +295,6 @@ class WaveGradientLabelView: UIView {
         print("   - threshold: \(marqueeThreshold) (\(thresholdWidth)px)")
         print("   - needsScroll: \(textWidth > thresholdWidth) (\(textWidth > thresholdWidth ? "✅" : "❌"))")
         print("   - maskLabel.frame: \(maskLabel.frame)")
-        print("   - maskLabel.attributedText: \(maskLabel.attributedText?.string ?? "nil")")
         print("   - emojiLabel.frame: \(emojiLabel.frame)")
         print("   - marqueeDisplayLink: \(marqueeDisplayLink != nil ? "✅ running" : "❌ not running")")
         print("   - clipsToBounds: \(clipsToBounds)")
@@ -232,6 +316,15 @@ class WaveGradientLabelView: UIView {
                 print("   ⚠️ CRITICAL: Text is wider than container but threshold blocks it!")
                 print("      Solution: Set marqueeThreshold = 1.0 (default)")
             }
+        }
+        
+        // ✅ 检查文本不一致的情况
+        if text != (maskLabel.text ?? "") {
+            print("   🚨 TEXT MISMATCH DETECTED!")
+            print("      - Property 'text': \"\(text)\"")
+            print("      - maskLabel.text: \"\(maskLabel.text ?? "nil")\"")
+            print("      - This may cause marquee issues!")
+            print("      💡 Solution: Call rebuildAttributedTextAndLayout() or set text again")
         }
     }
 
@@ -354,35 +447,98 @@ class WaveGradientLabelView: UIView {
 
     private func updateGradientColors() {
         let colors = gradientColors.map { $0.cgColor }
-        gradientLayer.colors = colors + colors
-
-        // ✅ 关键：让 locations 设置为让前半部分（0-0.5）和后半部分（0.5-1.0）完全相同
-        // 这样当 gradientLayer 移动 -w 时，视觉上是无缝的
+        
+        // ✅ 关键：创建无缝循环的渐变
+        // 策略：[a,b,c,d,a] 重复两次，让 d→a 的过渡平滑
         let count = gradientColors.count
-        var locations: [NSNumber] = []
         
-        // 第一组：0 到 0.5
-        for i in 0..<count {
-            locations.append(NSNumber(value: Double(i) / Double(count) * 0.5))
-        }
-        // 第二组：0.5 到 1.0（与第一组相同的间隔）
-        for i in 0..<count {
-            locations.append(NSNumber(value: 0.5 + Double(i) / Double(count) * 0.5))
+        if count > 1 {
+            // 添加第一个颜色到末尾，形成循环：[a,b,c,d,a]
+            let cyclicColors = colors + [colors[0]]
+            gradientLayer.colors = cyclicColors + cyclicColors
+            
+            var locations: [NSNumber] = []
+            let totalSteps = count  // a,b,c,d 之间有 count 个间隔
+            let step = 0.5 / Double(totalSteps)
+            
+            // 第一组：0 到 0.5
+            for i in 0...count {
+                let location = Double(i) * step
+                locations.append(NSNumber(value: location))
+            }
+            
+            // 第二组：0.5 到 1.0
+            for i in 0...count {
+                let location = 0.5 + Double(i) * step
+                locations.append(NSNumber(value: location))
+            }
+            
+            gradientLayer.locations = locations
+        } else {
+            // 只有一个颜色
+            gradientLayer.colors = [colors[0], colors[0]]
+            gradientLayer.locations = [0, 1.0]
         }
         
-        gradientLayer.locations = locations
+        #if DEBUG
+        print("🎨 [updateGradientColors] input colors: \(count)")
+        print("   gradient colors: \(gradientLayer.colors?.count ?? 0)")
+        print("   locations: \(gradientLayer.locations ?? [])")
+        #endif
     }
 
     // MARK: - Emoji handling
     private func isEmojiScalar(_ scalar: UnicodeScalar) -> Bool {
+        // 1. 检查是否是表情展示形式（彩色表情）
         if scalar.properties.isEmojiPresentation { return true }
-        if scalar.properties.generalCategory == .otherSymbol, scalar.properties.isEmoji { return true }
-        if scalar.properties.isEmoji && (scalar.value >= 0x1F000) { return true }
+        
+        // 2. 检查是否是标准表情符号范围（通常是彩色的）
+        if scalar.value >= 0x1F000 && scalar.value <= 0x1FFFF {
+            // 排除单独的区域指示符号（国旗字母）
+            if scalar.value >= 0x1F1E6 && scalar.value <= 0x1F1FF {
+                return false
+            }
+            
+            // 排除带圆圈/方框的字母和数字（装饰性字符）
+            // 这些字符应该跟文字一起渲染
+            if scalar.value >= 0x1F170 && scalar.value <= 0x1F189 {
+                return false  // 🅰-🆉 等方框字母
+            }
+            if scalar.value >= 0x1F100 && scalar.value <= 0x1F10C {
+                return false  // 🄀-🄌 等带圆圈数字
+            }
+            
+            return true
+        }
+        
+        // 3. 其他符号（如 ★ ❤ 等）不作为表情处理
         return false
     }
 
     private func characterContainsEmoji(_ ch: Character) -> Bool {
+        // ✅ 如果字符包含文本变体选择器 U+FE0E，不作为表情处理
+        if ch.unicodeScalars.contains(where: { $0.value == 0xFE0E }) {
+            return false
+        }
+        
+        // ✅ 检查是否是完整的国旗（两个区域指示符号）
+        let regionalIndicators = ch.unicodeScalars.filter {
+            $0.value >= 0x1F1E6 && $0.value <= 0x1F1FF
+        }
+        if regionalIndicators.count == 2 {
+            // 完整的国旗，作为表情处理
+            return true
+        } else if regionalIndicators.count == 1 {
+            // 不完整的国旗，作为文字处理
+            return false
+        }
+        
+        // 检查字符中是否包含真正的表情符号
         for scalar in ch.unicodeScalars {
+            // 跳过变体选择器
+            if scalar.value == 0xFE0E || scalar.value == 0xFE0F {
+                continue
+            }
             if isEmojiScalar(scalar) { return true }
         }
         return false
@@ -401,18 +557,26 @@ class WaveGradientLabelView: UIView {
             let isEmoji = characterContainsEmoji(ch)
 
             if isEmoji {
+                // ✅ 真正的彩色表情（如 👑 😀）：使用系统字体，显示原色
+                let emojiFont = UIFont.systemFont(ofSize: font.pointSize)
+                
+                // 在 mask 中透明
                 maskAttr.append(NSAttributedString(string: str, attributes: [
-                    .font: font,
+                    .font: emojiFont,
                     .foregroundColor: UIColor.clear
                 ]))
+                // 在 emoji label 中显示原色
                 emojiAttr.append(NSAttributedString(string: str, attributes: [
-                    .font: font
+                    .font: emojiFont
                 ]))
             } else {
+                // ✅ 普通文字和文本样式符号（如 ★ ❤︎）：应用渐变效果
+                // 在 mask 中白色（用于渐变）
                 maskAttr.append(NSAttributedString(string: str, attributes: [
                     .font: font,
                     .foregroundColor: normalColorForMask
                 ]))
+                // 在 emoji label 中透明
                 emojiAttr.append(NSAttributedString(string: str, attributes: [
                     .font: font,
                     .foregroundColor: UIColor.clear
@@ -586,14 +750,29 @@ class WaveGradientLabelView: UIView {
         guard w > 0, h > 0 else { return }
 
         let now = CACurrentMediaTime()
-        let duration = max(animationDuration, 0.001)
+        // ✅ 使用 getCurrentAnimationDuration() 获取当前应该使用的时长
+        let duration = max(getCurrentAnimationDuration(), 0.001)
         let elapsed = now - gradientStartTime
         
         // ✅ 关键：使用 truncatingRemainder 保持在 [0, 1) 范围
         // 但因为 gradientLayer 是 2 倍大小且 locations 均匀分布，循环是无缝的
         let speed = 1.0 / duration
         let cycles = elapsed * speed
-        let phase = CGFloat(cycles.truncatingRemainder(dividingBy: 1.0))
+        var phase = CGFloat(cycles.truncatingRemainder(dividingBy: 1.0))
+        
+        // ✅ 修复：确保 phase 永远小于 1.0（避免浮点数精度问题）
+        if phase >= 1.0 {
+            phase = 0.0
+        }
+        
+        #if DEBUG
+        // 只在 phase 接近 0 或 1 时打印（循环点）
+        if phase < 0.05 || phase > 0.95 {
+            let colors = gradientLayer.colors?.count ?? 0
+            let locations = gradientLayer.locations?.count ?? 0
+            print("🎨 [Gradient] phase: \(String(format: "%.3f", phase)), duration: \(duration), direction: \(gradientDirection), colors: \(colors), locations: \(locations), frame: \(gradientLayer.frame)")
+        }
+        #endif
         
         let dx: CGFloat
         let dy: CGFloat
@@ -688,12 +867,16 @@ class WaveGradientLabelView: UIView {
         resetMarqueeToStartPosition()
         marqueeStartTime = CACurrentMediaTime() + marqueeDelay
         
+        // ✅ 跑马灯启动后，速度会自动改变（通过 getCurrentAnimationDuration）
+        // 不需要重置 gradientStartTime，让动画平滑过渡
+        
         #if DEBUG
         print("   ✅ Marquee started, delay: \(marqueeDelay)s")
+        print("   🎨 Current animation duration: \(getCurrentAnimationDuration())s")
         #endif
     }
 
-    private func stopMarquee() {
+     func stopMarquee() {
         marqueeDisplayLink?.invalidate()
         marqueeDisplayLink = nil
 
@@ -705,6 +888,14 @@ class WaveGradientLabelView: UIView {
         // ✅ 兜底：确保第二份内容隐藏
         maskLabel2.isHidden = true
         emojiLabel2.isHidden = true
+        
+        // ✅ 跑马灯停止后，速度会自动恢复（通过 getCurrentAnimationDuration）
+        // 不需要重置 gradientStartTime，让动画平滑过渡
+        
+        #if DEBUG
+        print("🎬 [Marquee] Stopped, gradient speed restored")
+        print("   🎨 Current animation duration: \(getCurrentAnimationDuration())s")
+        #endif
     }
 
     private func resetMarqueeToStartPosition() {
@@ -781,3 +972,4 @@ class WaveGradientLabelView: UIView {
         emojiLabel2.frame.origin.x = x2
     }
 }
+

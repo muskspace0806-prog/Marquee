@@ -154,6 +154,7 @@ label.gradientDirection = .diagonalUpLeft         // 右下→左上
 | `marqueeGap` | CGFloat | 两段文字之间的间距 | 40.0 |
 | `marqueeDirection` | MarqueeDirection | 跑马灯方向 | .rightToLeft |
 | `marqueeThreshold` | CGFloat | 启动跑马灯的阈值（0-1） | 1.0 |
+| `sameDirectionAnimationDuration` | TimeInterval? | 方向一致时的渐变时长 | nil |
 
 ## 方法说明
 
@@ -172,6 +173,9 @@ label.stopAnimation()
 ```swift
 // 重启跑马灯（兜底方法）
 label.restartMarqueeIfNeeded()
+
+// 强制检查并启用跑马灯（如果文本超出）
+label.forceEnableMarqueeIfTextOverflow()
 
 // 调试跑马灯状态
 label.debugMarqueeStatus()
@@ -221,6 +225,26 @@ label.lineBreakMode = .byClipping  // 不显示省略号
 这是由于 frame 变化导致的，已在最新版本中修复。
 
 详见：[文字闪烁问题修复说明.md](文字闪烁问题修复说明.md)
+
+### 跑马灯和渐变方向冲突？
+
+当跑马灯和渐变动画方向一致时，会出现视觉上的参照系问题（渐变看起来反了）。
+
+解决方法：
+
+```swift
+// 方案 1：设置方向一致时的速度（推荐）⭐⭐⭐⭐⭐
+label.animationDuration = 4.5                     // 正常速度
+label.sameDirectionAnimationDuration = 0.5        // 方向一致时使用 0.5 秒
+// 跑马灯启动后会自动切换到 0.5 秒，停止后恢复 4.5 秒
+
+// 方案 2：完全暂停渐变（可选）
+label.pauseGradientDuringMarquee = true
+
+// 方案 3：使用相反的渐变方向（不推荐，静态时会错）
+```
+
+详见：[跑马灯渐变同步修复说明.md](跑马灯渐变同步修复说明.md)
 
 ## 文档
 

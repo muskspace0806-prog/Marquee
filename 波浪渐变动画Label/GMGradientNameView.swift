@@ -1,10 +1,43 @@
-// GMGradientNameView.swift
-// 简化版本 - 只保留核心功能
+//
+//  GMGradientNameView.swift
+//  波浪渐变动画Label
+//
+//  Created by hule on 2026/1/16.
+//
 
 import UIKit
 
+/// 模拟语言切换类（如果你的项目中没有，需要添加）
+class GMLanguageChange {
+    static let shared = GMLanguageChange()
+    var isMiddleEast: Bool = false  // 是否是中东语言（阿语等）
+}
+
+/// UIColor 扩展（如果你的项目中没有，需要添加）
+extension UIColor {
+    convenience init(hexColor: String) {
+        var hexString = hexColor.trimmingCharacters(in: .whitespacesAndNewlines).uppercased()
+        
+        if hexString.hasPrefix("#") {
+            hexString.remove(at: hexString.startIndex)
+        }
+        
+        var rgbValue: UInt64 = 0
+        Scanner(string: hexString).scanHexInt64(&rgbValue)
+        
+        let red = CGFloat((rgbValue & 0xFF0000) >> 16) / 255.0
+        let green = CGFloat((rgbValue & 0x00FF00) >> 8) / 255.0
+        let blue = CGFloat(rgbValue & 0x0000FF) / 255.0
+        
+        self.init(red: red, green: green, blue: blue, alpha: 1.0)
+    }
+}
+
 /// vip渐变名字配置
 class GMGradientNameView: GMWaveGradientLabelView {
+    
+    // ✅ 记录当前配置的文字，避免重复配置
+    private var currentConfiguredText: String = ""
     
     /// 配置文字大小和颜色
     /// - Parameters:
@@ -15,27 +48,37 @@ class GMGradientNameView: GMWaveGradientLabelView {
     ///   - defaultColors: 默认颜色
     ///   - isAutoScroll: 是否自动滚动（非 VIP 也可以滚动）
     func configUI(text: String,
-                  font: UIFont, 
+                  font: UIFont,
                   sameDirectionAnimationDuration: TimeInterval = 1.4,
-                  level: Int, 
-                  defaultColors: [UIColor], 
+                  level: Int,
+                  defaultColors: [UIColor],
                   isAutoScroll: Bool = false) {
         
-        // ✅ 步骤 1：重置所有状态（清理复用残留）
-        self.resetAllStates()
+        #if DEBUG
+        print("\n🔧 [GMGradientNameView.configUI] Called")
+        print("tt   - View instance: \(Unmanaged.passUnretained(self).toOpaque())")
+        print("tt   - New text: \"\(text)\"")
+        print("tt   - Current text: \"\(self.text)\"")
+        print("tt   - Level: \(level)")
+        #endif
         
-        // ✅ 步骤 2：设置文字（必须在配置其他属性之前）
+        // ✅ 关键优化：先停止所有动画，避免异步问题
+        self.stopAnimation()
+        self.stopMarquee()
+        
+        // ✅ 步骤 1：设置文字（会自动触发 didSet 清理）
         self.text = text
+        currentConfiguredText = text
         
-        // ✅ 步骤 3：设置渐变方向和对齐方式
+        // ✅ 步骤 2：设置渐变方向和对齐方式
         self.gradientDirection = GMLanguageChange.shared.isMiddleEast ? .horizontalLeftToRight : .horizontalRightToLeft
         self.textAlignment = GMLanguageChange.shared.isMiddleEast ? .right : .left
         
-        // ✅ 步骤 4：设置字体和颜色
+        // ✅ 步骤 3：设置字体和颜色
         self.font = font
         self.gradientColors = getColors(level: level, defaultColors: defaultColors)
         
-        // ✅ 步骤 5：如果是 VIP 或需要自动滚动，配置跑马灯
+        // ✅ 步骤 4：如果是 VIP 或需要自动滚动，配置跑马灯
         if level > 0 || isAutoScroll {
             self.animationDuration = 4.5
             self.marqueeDirection = GMLanguageChange.shared.isMiddleEast ? .leftToRight : .rightToLeft
@@ -46,7 +89,23 @@ class GMGradientNameView: GMWaveGradientLabelView {
             self.marqueeThreshold = 1.0
             self.enableMarquee = true
             self.startAnimation()
+            
+            #if DEBUG
+            print("   ✅ Marquee enabled")
+            #endif
+        } else {
+            self.enableMarquee = false
+            self.startAnimation()
+            
+            #if DEBUG
+            print("   ✅ Marquee disabled (level 0)")
+            #endif
         }
+        
+        #if DEBUG
+        print("✅ [GMGradientNameView.configUI] Completed")
+        print("   - Final text: \"\(self.text)\"\n")
+        #endif
     }
     
     override func layoutSubviews() {
@@ -100,46 +159,3 @@ class GMGradientNameView: GMWaveGradientLabelView {
         return defaultColors
     }
 }
-
-// MARK: - 使用示例
-
-/*
- // ============================================
- // 基本使用
- // ============================================
- 
- let nameLabel = GMGradientNameView()
- nameLabel.frame = CGRect(x: 20, y: 100, width: 200, height: 40)
- view.addSubview(nameLabel)
- 
- // 配置
- nameLabel.configUI(
-     text: "VIP用户名😊",
-     font: UIFont.systemFont(ofSize: 16, weight: .bold),
-     sameDirectionAnimationDuration: 1.4,
-     level: 3,
-     defaultColors: [.white],
-     isAutoScroll: false
- )
- 
- // ============================================
- // 如果跑马灯没有启动，可以尝试：
- // ============================================
- 
- // 方法 1：在 willDisplay 中重启
- func tableView(_ tableView: UITableView, willDisplay cell: UITableViewCell, forRowAt indexPath: IndexPath) {
-     if let cell = cell as? YourCell {
-         cell.nameLabel.restartMarqueeIfNeeded()
-     }
- }
- 
- // 方法 2：延迟刷新
- nameLabel.configUI(...)
- DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-     nameLabel.forceRefreshLayout()
- }
- 
- // 方法 3：调试
- nameLabel.debugMarqueeStatus()
- 
- */
