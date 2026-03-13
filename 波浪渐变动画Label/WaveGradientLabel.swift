@@ -79,6 +79,9 @@ class GMWaveGradientLabelView: UIView {
 
     private var gradientDisplayLink: CADisplayLink?
     private var gradientStartTime: CFTimeInterval = 0
+    
+    /// 是否已应用手动截断
+    private var hasAppliedManualTruncation = false
 
     var autoStartAnimation: Bool = true {
         didSet {
@@ -111,6 +114,9 @@ class GMWaveGradientLabelView: UIView {
     // MARK: - Public Properties
     var text: String = "" {
         didSet {
+            // ✅ 文字改变：重置手动截断标志
+            hasAppliedManualTruncation = false
+            
             rebuildAttributedTextAndLayout()
             ensureGradientAnimatingIfNeeded()
         }
@@ -221,12 +227,48 @@ class GMWaveGradientLabelView: UIView {
 
     var enableMarquee: Bool = false {
         didSet {
+            // ✅ 根据跑马灯状态设置 lineBreakMode
+            updateLineBreakMode()
+            
             if enableMarquee {
+                // ✅ 启用跑马灯：如果之前应用了手动截断，恢复原始文字
+                if hasAppliedManualTruncation {
+                    hasAppliedManualTruncation = false
+                    rebuildAttributedTextAndLayout()
+                }
                 startMarquee()
             } else {
                 stopMarquee()
             }
         }
+    }
+    
+    /// 更新文字截断模式
+    private func updateLineBreakMode() {
+        // ✅ 静态模式下使用 .byClipping（因为我们手动添加省略号）
+        // ✅ 跑马灯模式下也使用 .byClipping（文字会滚动）
+        let maskMode: NSLineBreakMode = .byClipping
+        maskLabel.lineBreakMode = maskMode
+        maskLabel2.lineBreakMode = maskMode
+        
+        // ✅ emojiLabel：始终使用 .byClipping
+        emojiLabel.lineBreakMode = .byClipping
+        emojiLabel2.lineBreakMode = .byClipping
+        
+        // ✅ 静态模式：确保 emojiLabel 可见
+        if !enableMarquee {
+            updateEmojiLabelVisibility()
+        }
+    }
+    
+    /// 更新 emojiLabel 的可见性
+    private func updateEmojiLabelVisibility() {
+        // ✅ 现在使用手动截断+省略号的方案，emojiLabel 可以始终可见
+        // 表情符号会正常显示（彩色），省略号也会正常显示（应用渐变）
+        emojiLabel.isHidden = false
+        emojiLabel2.isHidden = false
+        emojiLabel.lineBreakMode = .byClipping
+        emojiLabel2.lineBreakMode = .byClipping
     }
     
     /// 强制重新启动跑马灯（用于兜底）
@@ -400,13 +442,13 @@ class GMWaveGradientLabelView: UIView {
         maskLabel.textAlignment = textAlignment
         maskLabel.font = font
         maskLabel.numberOfLines = 1
-        maskLabel.lineBreakMode = .byClipping  // ✅ 不显示省略号
+        maskLabel.lineBreakMode = .byTruncatingTail  // ✅ 默认显示省略号
         maskLabel.backgroundColor = .clear
 
         maskLabel2.textAlignment = textAlignment
         maskLabel2.font = font
         maskLabel2.numberOfLines = 1
-        maskLabel2.lineBreakMode = .byClipping  // ✅ 不显示省略号
+        maskLabel2.lineBreakMode = .byTruncatingTail  // ✅ 默认显示省略号
         maskLabel2.backgroundColor = .clear
 
         maskContainerLayer.addSublayer(maskLabel.layer)
@@ -546,25 +588,30 @@ class GMWaveGradientLabelView: UIView {
 
     private func rebuildAttributedTextAndLayout() {
         let full = text
+        
+        // ✅ 暂时不判断是否需要截断，先构建完整的 attributedText
+        // 在 layoutSubviews 之后再判断（因为此时 bounds 可能还是 0）
+        let displayText = full
 
         let maskAttr = NSMutableAttributedString()
         let emojiAttr = NSMutableAttributedString()
 
         let normalColorForMask = UIColor.white
 
-        for ch in full {
+        for ch in displayText {
             let str = String(ch)
             let isEmoji = characterContainsEmoji(ch)
 
             if isEmoji {
-                // ✅ 真正的彩色表情（如 👑 😀）：使用系统字体，显示原色
+                // ✅ 真正的彩色表情（如 👑 😀）：使用系统字体
                 let emojiFont = UIFont.systemFont(ofSize: font.pointSize)
                 
-                // 在 mask 中透明
+                // 在 mask 中透明，让 emojiLabel 显示彩色表情
                 maskAttr.append(NSAttributedString(string: str, attributes: [
                     .font: emojiFont,
                     .foregroundColor: UIColor.clear
                 ]))
+                
                 // 在 emoji label 中显示原色
                 emojiAttr.append(NSAttributedString(string: str, attributes: [
                     .font: emojiFont
@@ -596,7 +643,162 @@ class GMWaveGradientLabelView: UIView {
 
         if enableMarquee {
             resetMarqueeToStartPosition()
+        } else {
+            // ✅ 静态模式：在 layoutSubviews 之后再处理截断
+            emojiLabel.isHidden = false
+            emojiLabel2.isHidden = false
+            updateEmojiLabelVisibility()
         }
+    }
+    
+    /// 判断文字是否会被截断（需要在 bounds 确定后调用）
+    private func willTextBeTruncated(_ text: String) -> Bool {
+        guard bounds.width > 0 else { return false }
+        
+        // ✅ 使用 maskLabel 的 attributedText 来测量，更准确
+        guard let attrText = maskLabel.attributedText, attrText.length > 0 else {
+            return false
+        }
+        
+        let textWidth = attrText.boundingRect(
+            with: CGSize(width: CGFloat.greatestFiniteMagnitude, height: bounds.height),
+            options: [.usesLineFragmentOrigin, .usesFontLeading],
+            context: nil
+        ).width
+        
+        return textWidth > bounds.width
+    }
+    
+    /// 手动截断文字并添加省略号
+    private func truncateTextWithEllipsis(_ text: String) -> NSAttributedString {
+        let ellipsis = "..."
+        
+        // ✅ 使用 attributedString 计算省略号宽度，更准确
+        let ellipsisAttr = NSAttributedString(string: ellipsis, attributes: [.font: font])
+        let ellipsisWidth = ellipsisAttr.boundingRect(
+            with: CGSize(width: CGFloat.greatestFiniteMagnitude, height: bounds.height),
+            options: [.usesLineFragmentOrigin, .usesFontLeading],
+            context: nil
+        ).width
+        
+        // ✅ 添加安全边距（4 像素），确保不会超出
+        let safetyMargin: CGFloat = 4
+        let maxWidth = bounds.width - ellipsisWidth - safetyMargin
+        
+        var result = ""
+        var currentAttr = NSMutableAttributedString()
+        
+        for ch in text {
+            let charStr = String(ch)
+            let isEmoji = characterContainsEmoji(ch)
+            let charFont = isEmoji ? UIFont.systemFont(ofSize: font.pointSize) : font
+            
+            // ✅ 使用 attributedString 计算字符宽度，更准确
+            let charAttr = NSAttributedString(string: charStr, attributes: [.font: charFont])
+            let charWidth = charAttr.boundingRect(
+                with: CGSize(width: CGFloat.greatestFiniteMagnitude, height: bounds.height),
+                options: [.usesLineFragmentOrigin, .usesFontLeading],
+                context: nil
+            ).width
+            
+            // ✅ 测试添加这个字符后的总宽度
+            let testAttr = NSMutableAttributedString(attributedString: currentAttr)
+            testAttr.append(charAttr)
+            let testWidth = testAttr.boundingRect(
+                with: CGSize(width: CGFloat.greatestFiniteMagnitude, height: bounds.height),
+                options: [.usesLineFragmentOrigin, .usesFontLeading],
+                context: nil
+            ).width
+            
+            if testWidth > maxWidth {
+                break
+            }
+            
+            result.append(ch)
+            currentAttr.append(charAttr)
+        }
+        
+        result += ellipsis
+        
+        // 构建 attributedText
+        let maskAttr = NSMutableAttributedString()
+        let emojiAttr = NSMutableAttributedString()
+        
+        for ch in result {
+            let str = String(ch)
+            let isEmoji = characterContainsEmoji(ch)
+            
+            if isEmoji {
+                let emojiFont = UIFont.systemFont(ofSize: font.pointSize)
+                maskAttr.append(NSAttributedString(string: str, attributes: [
+                    .font: emojiFont,
+                    .foregroundColor: UIColor.clear
+                ]))
+                emojiAttr.append(NSAttributedString(string: str, attributes: [
+                    .font: emojiFont
+                ]))
+            } else {
+                maskAttr.append(NSAttributedString(string: str, attributes: [
+                    .font: font,
+                    .foregroundColor: UIColor.white
+                ]))
+                emojiAttr.append(NSAttributedString(string: str, attributes: [
+                    .font: font,
+                    .foregroundColor: UIColor.clear
+                ]))
+            }
+        }
+        
+        return maskAttr
+    }
+    
+    /// 应用手动截断（在 layoutSubviews 之后调用）
+    private func applyManualTruncationIfNeeded() {
+        guard !enableMarquee else {
+            // 跑马灯模式：不需要截断
+            hasAppliedManualTruncation = false
+            return
+        }
+        guard bounds.width > 0 else { return }
+        guard willTextBeTruncated(text) else {
+            // 文字不会被截断：不需要手动截断
+            hasAppliedManualTruncation = false
+            return
+        }
+        
+        // ✅ 避免重复应用截断
+        guard !hasAppliedManualTruncation else { return }
+        
+        // 手动截断并更新 attributedText
+        let truncatedMaskAttr = truncateTextWithEllipsis(text)
+        maskLabel.attributedText = truncatedMaskAttr
+        maskLabel2.attributedText = truncatedMaskAttr
+        
+        // 同时更新 emojiLabel
+        let emojiAttr = NSMutableAttributedString()
+        if let maskStr = truncatedMaskAttr.string as String? {
+            for ch in maskStr {
+                let str = String(ch)
+                let isEmoji = characterContainsEmoji(ch)
+                
+                if isEmoji {
+                    let emojiFont = UIFont.systemFont(ofSize: font.pointSize)
+                    emojiAttr.append(NSAttributedString(string: str, attributes: [
+                        .font: emojiFont
+                    ]))
+                } else {
+                    emojiAttr.append(NSAttributedString(string: str, attributes: [
+                        .font: font,
+                        .foregroundColor: UIColor.clear
+                    ]))
+                }
+            }
+        }
+        emojiLabel.attributedText = emojiAttr
+        emojiLabel2.attributedText = emojiAttr
+        
+        // ✅ 标记已应用手动截断
+        hasAppliedManualTruncation = true
     }
 
     // MARK: - Layout & Size
@@ -641,6 +843,9 @@ class GMWaveGradientLabelView: UIView {
             emojiLabel.frame = bounds
             emojiLabel2.isHidden = true
             maskLabel2.isHidden = true  // ✅ 兜底：确保隐藏
+            
+            // ✅ 静态模式：应用手动截断
+            applyManualTruncationIfNeeded()
         } else {
             emojiLabel.isHidden = false
             emojiLabel2.isHidden = false
@@ -829,14 +1034,20 @@ class GMWaveGradientLabelView: UIView {
     private func startMarquee() {
         updateTextSize()
 
-        // ✅ 使用阈值判断是否需要滚动
-        let textWidth = maskLabel.frame.width
+        // ✅ 跑马灯模式：恢复 emojiLabel 的可见性
+        emojiLabel.alpha = 1.0
+        emojiLabel2.alpha = 1.0
+
+        // ✅ 使用实际测量的文字宽度，而不是 maskLabel.frame.width
+        let textWidth = maskLabel.sizeThatFits(CGSize(width: CGFloat.greatestFiniteMagnitude, height: bounds.height)).width
         let containerWidth = bounds.width
         let needsScroll = textWidth > containerWidth * marqueeThreshold
         
         #if DEBUG
         print("🎬 [Marquee] startMarquee called")
-        print("   - Text: \(text)")
+        print("   - Text (property): \(text)")
+        print("   - Text (maskLabel): \(maskLabel.text ?? "nil")")
+        print("   - Text (attributedText): \(maskLabel.attributedText?.string ?? "nil")")
         print("   - textWidth: \(textWidth)")
         print("   - containerWidth: \(containerWidth)")
         print("   - threshold: \(marqueeThreshold) (\(containerWidth * marqueeThreshold)px)")

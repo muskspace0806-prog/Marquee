@@ -33,6 +33,13 @@ extension UIColor {
     }
 }
 
+//
+//  GMVipNameConfiguration.swift
+//  Gimme
+//
+//  Created by hule on 2026/2/28.
+//
+
 /// vip渐变名字配置
 class GMGradientNameView: GMWaveGradientLabelView {
     
@@ -45,12 +52,14 @@ class GMGradientNameView: GMWaveGradientLabelView {
     ///   - font: 字体
     ///   - sameDirectionAnimationDuration: 渐变和跑马灯同向时的动画时长
     ///   - level: VIP 等级（0 表示非 VIP）
+    ///   - isStill: 是否静态,如果是,表示不支持任何滚动
     ///   - defaultColors: 默认颜色
     ///   - isAutoScroll: 是否自动滚动（非 VIP 也可以滚动）
     func configUI(text: String,
                   font: UIFont,
                   sameDirectionAnimationDuration: TimeInterval = 1.4,
                   level: Int,
+                  isStill: Bool = false,
                   defaultColors: [UIColor],
                   isAutoScroll: Bool = false) {
         
@@ -80,15 +89,23 @@ class GMGradientNameView: GMWaveGradientLabelView {
         
         // ✅ 步骤 4：如果是 VIP 或需要自动滚动，配置跑马灯
         if level > 0 || isAutoScroll {
-            self.animationDuration = 4.5
-            self.marqueeDirection = GMLanguageChange.shared.isMiddleEast ? .leftToRight : .rightToLeft
-            self.sameDirectionAnimationDuration = sameDirectionAnimationDuration
-            self.marqueeSpeed = 45
-            self.marqueeDelay = 0.0
-            self.marqueeGap = 10
-            self.marqueeThreshold = 1.0
-            self.enableMarquee = true
-            self.startAnimation()
+            
+            if isStill == true {
+                self.enableMarquee = false
+                self.startAnimation()
+            }
+            else {
+                self.animationDuration = 4.5
+                self.marqueeDirection = GMLanguageChange.shared.isMiddleEast ? .leftToRight : .rightToLeft
+                self.sameDirectionAnimationDuration = sameDirectionAnimationDuration
+                self.marqueeSpeed = 45
+                self.marqueeDelay = 0.0
+                self.marqueeGap = 10
+                self.marqueeThreshold = 1.0
+                self.enableMarquee = true
+                self.startAnimation()
+            }
+
             
             #if DEBUG
             print("   ✅ Marquee enabled")
